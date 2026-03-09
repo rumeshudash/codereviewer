@@ -8,11 +8,16 @@ import minimatch from "minimatch";
 import parseDiff, { File } from "parse-diff";
 import { z } from "zod";
 
-const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
+const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN", { required: true });
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
 const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
 const GEMINI_API_KEY: string = core.getInput("GEMINI_API_KEY");
 const GEMINI_MODEL: string = core.getInput("GEMINI_MODEL");
+const CUSTOM_RULES: string[] = core
+  .getInput("custom_rules")
+  .split(",")
+  .map((rule: string) => rule.trim())
+  .filter((rule: string) => rule !== "");
 
 const openaiProvider = OPENAI_API_KEY
   ? createOpenAI({ apiKey: OPENAI_API_KEY })
@@ -35,16 +40,15 @@ const model = openaiProvider
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
 const reviewOutputSchema = z.object({
-  reviews: z
-    .array(
-      z.object({
-        path: z.string(),
-        lineNumber: z.union([z.string(), z.number()]),
-        endLineNumber: z.union([z.string(), z.number()]).optional(),
-        reviewComment: z.string(),
-        suggestedCode: z.string().optional(),
-      })
-    ),
+  reviews: z.array(
+    z.object({
+      path: z.string(),
+      lineNumber: z.union([z.string(), z.number()]),
+      endLineNumber: z.union([z.string(), z.number()]).optional(),
+      reviewComment: z.string(),
+      suggestedCode: z.string().optional(),
+    })
+  ),
 });
 
 interface PRDetails {
@@ -128,6 +132,8 @@ function createPromptForAllDiffs(
     })
     .join("\n\n");
 
+  const customRules = CUSTOM_RULES.map((rule) => `- ${rule}`).join("\n");
+
   return `You are a strict code reviewer. Review the pull request diff and output ONLY actionable issues. Instructions:
 
 CRITICAL - When to output comments:
@@ -145,6 +151,9 @@ Rules:
 - Avoid suggestions for refactoring unless they address a significant performance, security, or maintainability issue.
 - Write comments in GitHub Markdown format.
 - When a concrete code fix would help (bug fix, typo, safer API usage, missing check), include "suggestedCode" with the exact replacement code. Omit suggestedCode for conceptual or high-level feedback. For multi-line replacements, suggestedCode should be the full replacement block; GitHub will apply it to the range when start_line/end_line are used.
+
+Additional custom rules (if provided):
+${customRules.length > 0 ? customRules : "None"}
 
 Pull request title: ${prDetails.title}
 Pull request description:
